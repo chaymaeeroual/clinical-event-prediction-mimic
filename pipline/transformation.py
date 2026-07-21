@@ -1,5 +1,8 @@
 import pandas as pd
 import duckdb
+from dataquality import load_data
+tables = load_data()
+
 
 
 def admissions_joiture(admissions_df):
@@ -29,8 +32,8 @@ def admissions_joiture(admissions_df):
         WHERE deathtime IS NOT NULL
     """
     return con.execute(query).fetchdf()
-# admissions_events = admissions_joiture(tables["admissions"])
-# print(admissions_events.head())
+admissions_events = admissions_joiture(tables["admissions"])
+print(admissions_events.head())
 
 
 
@@ -77,9 +80,9 @@ def prescriptions_joiture(prescriptions_df):
     return con.execute(query).fetchdf()
 
 
-def transfers_joiture(transfers_cleann_df):
+def transfers_joiture(transfers_clean_df):
     con = duckdb.connect()
-    con.register("transfers", transfers_cleann_df)
+    con.register("transfers", transfers_clean_df)
     query = """
         SELECT subject_id, hadm_id, 'transfer' AS event_type,
                intime AS event_time, eventtype AS event_value,
@@ -89,9 +92,9 @@ def transfers_joiture(transfers_cleann_df):
     return con.execute(query).fetchdf()
 
 
-def emar_joiture(emar_cleann_df):
+def emar_joiture(emar_clean_df):
     con = duckdb.connect()
-    con.register("emar", emar_cleann_df)
+    con.register("emar", emar_clean_df)
     query = """
         SELECT subject_id, hadm_id, 'medication_administration' AS event_type,
                charttime AS event_time, medication AS event_value,
@@ -114,9 +117,9 @@ def hcpcsevents_joiture(hcpcsevents_df):
     return con.execute(query).fetchdf()
 
 
-def microbiologyevents_joiture(microbiologyevents_cleann_df):
+def microbiologyevents_joiture(microbiologyevents_clean_df):
     con = duckdb.connect()
-    con.register("microbiologyevents", microbiologyevents_cleann_df)
+    con.register("microbiologyevents", microbiologyevents_clean_df)
     query = """
         SELECT subject_id, hadm_id, 'microbiology_result' AS event_type,
                chartdate AS event_time,
@@ -126,82 +129,31 @@ def microbiologyevents_joiture(microbiologyevents_cleann_df):
     """
     return con.execute(query).fetchdf()
 
-def services_joiture(services_df):
-    con = duckdb.connect()
-    con.register("services", services_df)
-    query = """
-        SELECT subject_id, hadm_id, 'service' AS event_type,
-               transfertime AS event_time, curr_service AS event_value,
-               NULL AS order_hint, NULL AS provider_id, NULL AS event_location
-        FROM services
-    """
-    return con.execute(query).fetchdf()
 
 
 
+def build_all_events(tables, transfers_clean, emar_clean, micro_clean):
+    admissions = tables["admissions"]
 
-def build_all_events(tables):
+    events = pd.concat([
+        admissions_joiture(admissions),
+        diagnoses_joiture(tables["diagnoses_icd"], tables["d_icd_diagnoses"], admissions),
+        procedures_joiture(tables["procedures_icd"], tables["d_icd_procedures"]),
+        prescriptions_joiture(tables["prescriptions"]),
+        transfers_joiture(transfers_clean),
+        emar_joiture(emar_clean),
+        hcpcsevents_joiture(tables["hcpcsevents"]),
+        microbiologyevents_joiture(micro_clean),
+    ], ignore_index=True)
 
-    events_list = [
+    # Tri chronologique : d'abord par patient/séjour, puis par temps réel,
+    # puis par order_hint (seq_num) pour départager les égalités de date
+    events = events.sort_values(["subject_id", "hadm_id", "event_time", "order_hint"])
 
-        admissions_joiture(tables["admissions"]),
+    # Position de chaque événement dans sa séquence
+    events["event_position"] = events.groupby(["subject_id", "hadm_id"]).cumcount() + 1
 
-        diagnoses_joiture(
-            tables["diagnoses_icd"],
-            tables["d_icd_diagnoses"],
-            tables["admissions"]
-        ),
-
-        procedures_joiture(
-            tables["procedures_icd"],
-            tables["d_icd_procedures"]
-        ),
-
-        prescriptions_joiture(
-            tables["prescriptions"]
-        ),
-
-        transfers_joiture(
-            tables["transfers_cleann"]
-        ),
-
-        emar_joiture(
-            tables["emar_cleann"]
-        ),
-
-        hcpcsevents_joiture(
-            tables["hcpcsevents"]
-        ),
-
-        microbiologyevents_joiture(
-            tables["microbiologyevents_cleann"]
-        ),
-
-        services_joiture(
-            tables["services"]
-        )
-    ]
-
-    events = pd.concat(events_list, ignore_index=True)
-
-    events = events.sort_values(
-        by=[
-            "subject_id",
-            "hadm_id",
-            "event_time",
-            "order_hint"
-        ]
-    ).reset_index(drop=True)
-
-    events["event_position"] = (
-        events
-        .groupby(["subject_id", "hadm_id"])
-        .cumcount() + 1
-    )
-
-    print("=" * 50)
-    print("Nombre total d'événements :", len(events))
-    print("=" * 50)
+    print(f"Total d'événements construits : {len(events)}")
     print(events["event_type"].value_counts())
 
     return events

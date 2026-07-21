@@ -1,6 +1,10 @@
 import pandas as pd 
 import duckdb
 
+transfers=pd.read_csv("data/transfers.csv.gz",parse_dates=["intime","outtime"])
+admissions=pd.read_csv("data/admissions.csv.gz",parse_dates=["admittime","dischtime","deathtime","edregtime","edouttime"])
+emar=pd.read_csv("data/emar.csv.gz",parse_dates=["charttime","scheduletime","storetime"])
+microbiologyevents=pd.read_csv("data/microbiologyevents.csv.gz",parse_dates=["chartdate","charttime","storedate","storetime"])
 
 def clean_transfers(transfers, admissions):
     orphelins = transfers[transfers["hadm_id"].isnull()]
